@@ -59,7 +59,7 @@ type Theme = typeof T.dark | typeof T.light
 
 export default function CRM() {
   const [contacts, setContacts]   = useState<Contact[]>([])
-  const [loading, setLoading]     = useState(true)
+  const [loading, setLoading]     = useState(false)
   const [saving, setSaving]       = useState(false)
   const [view, setView]           = useState<'pipeline'|'list'>('pipeline')
   const [selected, setSelected]   = useState<string|null>(null)
@@ -70,7 +70,7 @@ export default function CRM() {
   const [dragId, setDragId]       = useState<string|null>(null)
   const [dragOver, setDragOver]   = useState<string|null>(null)
   const [confirmDel, setConfirmDel] = useState<Contact|null>(null)
-  const [dark, setDark]           = useState(true)
+  const [dark, setDark]           = useState(false)
   const t: Theme = dark ? T.dark : T.light
   const toastRef = useRef<ReturnType<typeof setTimeout>>(null)
 
