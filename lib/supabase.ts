@@ -25,6 +25,9 @@ export type Contact = {
   stage: string
   notes: string
   owner: string
+  category: string
+  priority: number
+  followup_date: string
   created_at: string
   updated_at: string
   activities?: Activity[]
@@ -33,8 +36,8 @@ export type Contact = {
 export async function fetchContacts(): Promise<Contact[]> {
   const { data, error } = await supabase
     .from('contacts')
-    .select('id,name,company,position,phone,email,network,stage,notes,owner,created_at,updated_at,activities(id,contact_id,type,text,date,created_at)')
-    .order('created_at', { ascending: false })
+    .select('id,name,company,position,phone,email,network,stage,notes,owner,category,priority,followup_date,created_at,updated_at,activities(id,contact_id,type,text,date,created_at)')
+    .order('priority', { ascending: false })
   if (error) throw error
   return (data ?? []).map(c => ({
     ...c,
@@ -58,7 +61,7 @@ export async function upsertContact(contact: Partial<Contact>): Promise<Contact>
     const { data, error } = await supabase
       .from('contacts')
       .insert(rest)
-      .select('id,name,company,position,phone,email,network,stage,notes,owner,created_at,updated_at')
+      .select('id,name,company,position,phone,email,network,stage,notes,owner,category,priority,followup_date,created_at,updated_at')
       .single()
     if (error) throw error
     return data

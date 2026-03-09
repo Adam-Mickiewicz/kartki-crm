@@ -1,3 +1,4 @@
+cat > components/CRM.tsx << 'ENDOFFILE'
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -28,11 +29,22 @@ const OWNERS = [
   { id: 'KK', label: 'KK', color: '#34d399' },
 ]
 
-const ini = (n: string) =>
-  n.split(' ').map(p => p[0] || '').join('').slice(0, 2).toUpperCase()
+const CATEGORIES = ['Kultura', 'Drogerie', 'Home/Gift', 'Dyskonty', 'Spożywcze', 'Stacje', 'Inne']
 
-const fmtDate = (d: string) =>
-  new Date(d).toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' })
+const PRIORITY_COLORS: Record<number, string> = {
+  10: '#ef4444', 9: '#f97316', 8: '#f59e0b',
+  7: '#84cc16', 6: '#22c55e', 5: '#14b8a6',
+  4: '#64748b', 3: '#64748b', 2: '#64748b', 1: '#64748b'
+}
+
+const ini = (n: string) => n.split(' ').map(p => p[0] || '').join('').slice(0, 2).toUpperCase()
+const fmtDate = (d: string) => new Date(d).toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric' })
+const isOverdue = (d: string) => d && new Date(d) < new Date()
+const isDueToday = (d: string) => {
+  if (!d) return false
+  const today = new Date().toISOString().split('T')[0]
+  return d === today
+}
 
 const T = {
   dark: {
@@ -43,6 +55,7 @@ const T = {
     selCard:'#1a2035',selBorder:'#f59e0b44',toastOk:'#14532d',toastErr:'#7f1d1d',
     toastInfo:'#1e3a5f',toastOkB:'#22c55e',toastErrB:'#ef4444',toastInfoB:'#60a5fa',
     delBg:'#1a0f0f',delBorder:'#3b1515',delColor:'#ef4444',timelineLine:'#1e2535',notesBg:'#0e1220',
+    overdue:'#7f1d1d',overdueText:'#ef4444',today:'#1a2e0f',todayText:'#22c55e',
   },
   light: {
     bg:'#f1f5f9',bgCard:'#ffffff',bgCol:'#f8fafc',bgInput:'#ffffff',bgPanel:'#f8fafc',
@@ -52,6 +65,7 @@ const T = {
     selCard:'#fffbeb',selBorder:'#f59e0b88',toastOk:'#dcfce7',toastErr:'#fee2e2',
     toastInfo:'#dbeafe',toastOkB:'#22c55e',toastErrB:'#ef4444',toastInfoB:'#60a5fa',
     delBg:'#fff1f2',delBorder:'#fecdd3',delColor:'#ef4444',timelineLine:'#e2e8f0',notesBg:'#f1f5f9',
+    overdue:'#fee2e2',overdueText:'#ef4444',today:'#dcfce7',todayText:'#16a34a',
   }
 } as const
 
@@ -59,14 +73,15 @@ type Theme = typeof T.dark | typeof T.light
 
 export default function CRM() {
   const [contacts, setContacts]   = useState<Contact[]>([])
-  const [loading, setLoading]     = useState(false)
+  const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
-  const [view, setView]           = useState<'pipeline'|'list'>('pipeline')
+  const [view, setView]           = useState<'pipeline'|'list'|'followups'>('pipeline')
   const [selected, setSelected]   = useState<string|null>(null)
   const [editContact, setEditContact] = useState<Partial<Contact>|null>(null)
   const [toast, setToast]         = useState<{msg:string,type:string}|null>(null)
   const [search, setSearch]       = useState('')
   const [fOwner, setFOwner]       = useState('')
+  const [fCategory, setFCategory] = useState('')
   const [dragId, setDragId]       = useState<string|null>(null)
   const [dragOver, setDragOver]   = useState<string|null>(null)
   const [confirmDel, setConfirmDel] = useState<Contact|null>(null)
@@ -84,7 +99,7 @@ export default function CRM() {
 
   const showToast = (msg: string, type = 'ok') => {
     setToast({ msg, type })
-    clearTimeout(toastRef.current)
+    clearTimeout(toastRef.current!)
     toastRef.current = setTimeout(() => setToast(null), 3000)
   }
 
@@ -105,7 +120,8 @@ export default function CRM() {
         ? { ...c, activities: [newAct, ...(c.activities ?? [])] }
         : c
       ))
-      showToast('Dodano aktywność ✓'); await load()
+      showToast('Dodano aktywność ✓')
+      await load()
     } catch { showToast('Błąd zapisu','err') }
     setSaving(false)
   }
@@ -124,8 +140,8 @@ export default function CRM() {
     try {
       const saved = await upsertContact(data)
       if (data.id) {
-        setContacts(cs => cs.map(c => c.id === data.id ? { ...c, ...saved } : c))
-        showToast('Zapisano ✓'); await load()
+        await load()
+        showToast('Zapisano ✓')
       } else {
         setContacts(cs => [{ ...saved, activities: [] }, ...cs])
         showToast('Dodano kontakt ✓')
@@ -152,7 +168,13 @@ export default function CRM() {
     const q = search.toLowerCase()
     return (!q || c.name?.toLowerCase().includes(q) || c.company.toLowerCase().includes(q))
       && (!fOwner || c.owner === fOwner)
+      && (!fCategory || c.category === fCategory)
   })
+
+  const followups = contacts.filter(c => c.followup_date).sort((a,b) =>
+    new Date(a.followup_date).getTime() - new Date(b.followup_date).getTime()
+  )
+  const overdueCount = followups.filter(c => isOverdue(c.followup_date) && c.stage !== 'won' && c.stage !== 'lost').length
 
   if (loading) return (
     <div style={{ fontFamily:"'DM Sans',sans-serif", background:t.bg, minHeight:'100vh',
@@ -171,6 +193,7 @@ export default function CRM() {
         ::-webkit-scrollbar-thumb{background:${t.scrollTh};border-radius:3px}
         @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
         @keyframes slideRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+        input[type=date]::-webkit-calendar-picker-indicator{opacity:.5;cursor:pointer}
       `}</style>
 
       {toast && (
@@ -183,6 +206,7 @@ export default function CRM() {
         </div>
       )}
 
+      {/* TOP BAR */}
       <div style={{ borderBottom:`1px solid ${t.border}`, padding:'0 20px', flexShrink:0,
         background:t.bgCard, transition:'background .25s' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', height:56 }}>
@@ -209,12 +233,16 @@ export default function CRM() {
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ display:'flex', background:t.badge, border:`1px solid ${t.border2}`,
               borderRadius:8, overflow:'hidden' }}>
-              {(['pipeline','list'] as const).map(v => (
+              {([['pipeline','⬛','Pipeline'],['list','☰','Lista'],['followups','📅','Follow-upy']] as const).map(([v,icon,label]) => (
                 <button key={v} onClick={() => setView(v)}
-                  style={{ padding:'6px 14px', background:view===v?t.border2:'transparent',
+                  style={{ padding:'6px 12px', background:view===v?t.border2:'transparent',
                     border:'none', color:view===v?t.text:t.textMute, cursor:'pointer',
-                    fontSize:12, fontFamily:'inherit', fontWeight:view===v?500:400 }}>
-                  {v === 'pipeline' ? '⬛ Pipeline' : '☰ Lista'}
+                    fontSize:12, fontFamily:'inherit', fontWeight:view===v?500:400, position:'relative' }}>
+                  {icon} {label}
+                  {v==='followups' && overdueCount > 0 && (
+                    <span style={{ position:'absolute', top:2, right:2, width:7, height:7,
+                      borderRadius:'50%', background:'#ef4444' }}/>
+                  )}
                 </button>
               ))}
             </div>
@@ -224,7 +252,7 @@ export default function CRM() {
                 display:'flex', alignItems:'center', justifyContent:'center' }}>
               {dark ? '☀️' : '🌙'}
             </button>
-            <button onClick={() => setEditContact({ stage:'lead', owner:'', activities:[] })}
+            <button onClick={() => setEditContact({ stage:'lead', owner:'', activities:[], priority:5 })}
               style={{ background:t.accent, color:t.accentFg, border:'none', borderRadius:7,
                 padding:'7px 14px', fontFamily:'inherit', fontWeight:600, fontSize:13, cursor:'pointer' }}>
               + Nowy kontakt
@@ -233,14 +261,22 @@ export default function CRM() {
         </div>
       </div>
 
+      {/* FILTER BAR */}
       <div style={{ padding:'10px 20px', borderBottom:`1px solid ${t.border}`, flexShrink:0,
         display:'flex', alignItems:'center', gap:12, flexWrap:'wrap',
         background:t.bgCard, transition:'background .25s' }}>
         <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="🔍  Szukaj kontaktu lub firmy..."
-          style={{ maxWidth:300, background:t.bgInput, border:`1px solid ${t.border2}`,
+          placeholder="🔍  Szukaj..."
+          style={{ width:200, background:t.bgInput, border:`1px solid ${t.border2}`,
             color:t.text, borderRadius:7, padding:'7px 11px', fontSize:13, outline:'none', fontFamily:'inherit' }}/>
-        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
+          <span style={{ fontSize:11, color:t.textMute, fontWeight:600, textTransform:'uppercase', letterSpacing:'.04em' }}>Kategoria:</span>
+          <Pill active={fCategory===''} color={t.textMute} borderActive={t.border2} onClick={() => setFCategory('')} t={t}>Wszystkie</Pill>
+          {CATEGORIES.map(cat => (
+            <Pill key={cat} active={fCategory===cat} color={t.accent} borderActive={t.accent} onClick={() => setFCategory(fCategory===cat?'':cat)} t={t}>{cat}</Pill>
+          ))}
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:5 }}>
           <span style={{ fontSize:11, color:t.textMute, fontWeight:600, textTransform:'uppercase', letterSpacing:'.04em' }}>Właściciel:</span>
           <Pill active={fOwner===''} color={t.textMute} borderActive={t.border2} onClick={() => setFOwner('')} t={t}>Wszyscy</Pill>
           {OWNERS.map(o => (
@@ -256,6 +292,8 @@ export default function CRM() {
       </div>
 
       <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
+
+        {/* PIPELINE */}
         {view === 'pipeline' && (
           <div style={{ flex:1, overflowX:'auto', padding:'16px 12px', display:'flex', gap:10, alignItems:'flex-start' }}>
             {STAGES.map(stage => {
@@ -270,7 +308,7 @@ export default function CRM() {
                     background: isOver?(dark?'#1a1f30':'#fffbeb'):t.bgCol,
                     border:`1px solid ${isOver?t.accent+'66':t.border}`,
                     borderRadius:10, display:'flex', flexDirection:'column',
-                    maxHeight:'calc(100vh - 130px)', transition:'all .15s' }}>
+                    maxHeight:'calc(100vh - 160px)', transition:'all .15s' }}>
                   <div style={{ padding:'10px 12px', borderBottom:`1px solid ${t.border}`, flexShrink:0 }}>
                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                       <div style={{ display:'flex', alignItems:'center', gap:7 }}>
@@ -284,43 +322,47 @@ export default function CRM() {
                   <div style={{ overflowY:'auto', padding:'8px', display:'flex', flexDirection:'column', gap:6, flex:1 }}>
                     {cards.map(c => {
                       const isSel = selected === c.id
+                      const overdue = isOverdue(c.followup_date) && c.stage !== 'won' && c.stage !== 'lost'
+                      const today = isDueToday(c.followup_date)
                       return (
                         <div key={c.id} draggable
                           onDragStart={() => setDragId(c.id)}
                           onDragEnd={() => setDragId(null)}
                           onClick={() => setSelected(c.id)}
                           style={{ background:isSel?t.selCard:t.bgCard,
-                            border:`1px solid ${isSel?t.selBorder:t.border2}`,
+                            border:`1px solid ${isSel?t.selBorder:overdue?t.overdueText+'44':t.border2}`,
                             borderRadius:8, padding:'10px', cursor:'pointer',
-                            transition:'all .12s', animation:'fadeIn .2s ease',
-                            boxShadow:isSel?`0 0 0 2px ${t.accent}22`:'none' }}>
+                            transition:'all .12s', animation:'fadeIn .2s ease' }}>
                           <div style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
                             <div style={{ width:26, height:26, borderRadius:'50%', background:t.bg,
-                              border:`1px solid ${stage.color}55`, display:'flex', alignItems:'center',
-                              justifyContent:'center', fontSize:9, fontWeight:600, color:stage.color, flexShrink:0 }}>
+                              border:`2px solid ${PRIORITY_COLORS[c.priority]||'#64748b'}`,
+                              display:'flex', alignItems:'center', justifyContent:'center',
+                              fontSize:9, fontWeight:700, color:PRIORITY_COLORS[c.priority]||'#64748b', flexShrink:0 }}>
                               {ini(c.company)}
                             </div>
-                            <div style={{ minWidth:0 }}>
+                            <div style={{ minWidth:0, flex:1 }}>
                               <div style={{ fontWeight:600, fontSize:12, whiteSpace:'nowrap',
                                 overflow:'hidden', textOverflow:'ellipsis' }}>{c.company}</div>
                               <div style={{ fontSize:10, color:t.textMute, marginTop:1,
                                 whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.position}</div>
                             </div>
+                            {c.priority >= 8 && <span style={{ fontSize:9, background:PRIORITY_COLORS[c.priority]+'22',
+                              color:PRIORITY_COLORS[c.priority], border:`1px solid ${PRIORITY_COLORS[c.priority]}44`,
+                              borderRadius:3, padding:'1px 4px', fontWeight:700, flexShrink:0 }}>{c.priority}</span>}
                           </div>
-                          {c.activities?.[0] && (
-                            <div style={{ marginTop:7, borderTop:`1px solid ${t.border}`, paddingTop:6,
-                              display:'flex', alignItems:'center', gap:4 }}>
-                              <span style={{ fontSize:10 }}>{ACTIVITY_TYPES.find(a => a.id === c.activities![0].type)?.icon}</span>
-                              <span style={{ fontSize:10, color:t.textMute, overflow:'hidden',
-                                textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.activities[0].text}</span>
+                          {c.followup_date && (
+                            <div style={{ marginTop:6, fontSize:10, fontWeight:500,
+                              color: overdue?t.overdueText:today?t.todayText:t.textMute,
+                              background: overdue?t.overdue:today?t.today:'transparent',
+                              borderRadius:4, padding: (overdue||today)?'2px 5px':'0' }}>
+                              📅 {overdue?'Zaległe: ':today?'Dziś: ':''}{fmtDate(c.followup_date)}
                             </div>
                           )}
-                          {c.email && <div style={{ marginTop:5, fontSize:10, color:'#3b82f6',
-                            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>✉ {c.email}</div>}
+                          {c.category && <div style={{ marginTop:4, fontSize:9, color:t.textFade }}>{c.category}</div>}
                           {c.owner && (() => { const o = OWNERS.find(x => x.id === c.owner); return o
-                            ? <div style={{ marginTop:5, display:'inline-block', background:o.color+'22',
+                            ? <div style={{ marginTop:4, display:'inline-block', background:o.color+'22',
                                 color:o.color, border:'1px solid '+o.color+'44', borderRadius:4,
-                                padding:'1px 6px', fontSize:10, fontWeight:600 }}>{o.label}</div>
+                                padding:'1px 6px', fontSize:9, fontWeight:600 }}>{o.label}</div>
                             : null })()}
                         </div>
                       )
@@ -335,13 +377,14 @@ export default function CRM() {
           </div>
         )}
 
+        {/* LIST */}
         {view === 'list' && (
           <div style={{ flex:1, overflowY:'auto', padding:'16px 20px' }}>
             <div style={{ background:t.bgCard, border:`1px solid ${t.border}`, borderRadius:10, overflow:'hidden' }}>
               <table style={{ width:'100%', borderCollapse:'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom:`1px solid ${t.border}`, background:t.bgCol }}>
-                    {['Firma','Kontakt','Właściciel','Etap','E-mail','Ostatnia aktywność',''].map(h => (
+                    {['Firma','Kategoria','Właściciel','Etap','Priorytet','Follow-up',''].map(h => (
                       <th key={h} style={{ padding:'10px 14px', textAlign:'left', fontSize:10,
                         fontWeight:600, color:t.textMute, textTransform:'uppercase', letterSpacing:'.05em' }}>{h}</th>
                     ))}
@@ -350,7 +393,8 @@ export default function CRM() {
                 <tbody>
                   {filtered.map((c, i) => {
                     const stage = STAGES.find(s => s.id === c.stage)
-                    const lastAct = c.activities?.[0]
+                    const overdue = isOverdue(c.followup_date) && c.stage !== 'won' && c.stage !== 'lost'
+                    const today = isDueToday(c.followup_date)
                     const isSel = selected === c.id
                     return (
                       <tr key={c.id} onClick={() => setSelected(c.id)}
@@ -361,14 +405,18 @@ export default function CRM() {
                         <td style={{ padding:'10px 14px' }}>
                           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                             <div style={{ width:28, height:28, borderRadius:'50%', background:t.bg,
-                              border:`1px solid ${stage?.color}44`, display:'flex', alignItems:'center',
-                              justifyContent:'center', fontSize:10, fontWeight:600, color:stage?.color||t.textSub, flexShrink:0 }}>
+                              border:`2px solid ${PRIORITY_COLORS[c.priority]||'#64748b'}`,
+                              display:'flex', alignItems:'center', justifyContent:'center',
+                              fontSize:10, fontWeight:700, color:PRIORITY_COLORS[c.priority]||'#64748b', flexShrink:0 }}>
                               {ini(c.company)}
                             </div>
                             <span style={{ fontWeight:500, fontSize:13 }}>{c.company}</span>
                           </div>
                         </td>
-                        <td style={{ padding:'10px 14px', fontSize:12, color:t.textSub }}>{c.position}</td>
+                        <td style={{ padding:'10px 14px' }}>
+                          {c.category && <span style={{ background:t.badge, border:`1px solid ${t.border2}`,
+                            borderRadius:4, padding:'2px 8px', fontSize:11, color:t.textSub }}>{c.category}</span>}
+                        </td>
                         <td style={{ padding:'10px 14px' }}>
                           {(() => { const o = OWNERS.find(x => x.id === c.owner); return o
                             ? <span style={{ background:o.color+'22', color:o.color,
@@ -381,9 +429,16 @@ export default function CRM() {
                             border:`1px solid ${stage?.color}33`, borderRadius:4,
                             padding:'2px 8px', fontSize:11, fontWeight:500 }}>{stage?.label}</span>
                         </td>
-                        <td style={{ padding:'10px 14px', fontSize:12, color:'#3b82f6' }}>{c.email||'—'}</td>
-                        <td style={{ padding:'10px 14px', fontSize:11, color:t.textMute }}>
-                          {lastAct ? <span>{ACTIVITY_TYPES.find(a => a.id === lastAct.type)?.icon} {fmtDate(lastAct.created_at)}</span> : '—'}
+                        <td style={{ padding:'10px 14px' }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:4 }}>
+                            <div style={{ width:6, height:6, borderRadius:'50%', background:PRIORITY_COLORS[c.priority]||'#64748b' }}/>
+                            <span style={{ fontSize:12, color:PRIORITY_COLORS[c.priority]||t.textMute, fontWeight:600 }}>{c.priority}/10</span>
+                          </div>
+                        </td>
+                        <td style={{ padding:'10px 14px', fontSize:11,
+                          color: overdue?t.overdueText:today?t.todayText:t.textMute,
+                          fontWeight: (overdue||today)?600:400 }}>
+                          {c.followup_date ? `${overdue?'⚠️ ':today?'🟢 ':''}${fmtDate(c.followup_date)}` : '—'}
                         </td>
                         <td style={{ padding:'10px 14px' }}>
                           <button onClick={e => { e.stopPropagation(); setEditContact({...c}) }}
@@ -396,6 +451,65 @@ export default function CRM() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* FOLLOW-UPS */}
+        {view === 'followups' && (
+          <div style={{ flex:1, overflowY:'auto', padding:'16px 20px' }}>
+            <div style={{ marginBottom:16, display:'flex', alignItems:'center', gap:10 }}>
+              <h2 style={{ fontSize:16, fontWeight:600 }}>📅 Follow-upy</h2>
+              {overdueCount > 0 && (
+                <span style={{ background:t.toastErr, color:t.toastErrB, border:`1px solid ${t.toastErrB}`,
+                  borderRadius:20, padding:'2px 10px', fontSize:11, fontWeight:600 }}>
+                  {overdueCount} zaległych
+                </span>
+              )}
+            </div>
+            {followups.length === 0 ? (
+              <div style={{ textAlign:'center', padding:'60px 0', color:t.textFade }}>
+                Brak zaplanowanych follow-upów.<br/>Dodaj je edytując kontakt.
+              </div>
+            ) : followups.map(c => {
+              const stage = STAGES.find(s => s.id === c.stage)
+              const overdue = isOverdue(c.followup_date) && c.stage !== 'won' && c.stage !== 'lost'
+              const today = isDueToday(c.followup_date)
+              return (
+                <div key={c.id} onClick={() => { setSelected(c.id); setView('pipeline') }}
+                  style={{ background:t.bgCard, border:`1px solid ${overdue?t.overdueText+'66':today?t.todayText+'66':t.border2}`,
+                    borderRadius:10, padding:'14px 16px', marginBottom:8, cursor:'pointer',
+                    display:'flex', alignItems:'center', gap:14, transition:'all .12s',
+                    animation:'fadeIn .2s ease' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = t.bgHover}
+                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = t.bgCard}>
+                  <div style={{ width:36, height:36, borderRadius:'50%', background:t.bg,
+                    border:`2px solid ${PRIORITY_COLORS[c.priority]||'#64748b'}`,
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    fontSize:11, fontWeight:700, color:PRIORITY_COLORS[c.priority]||'#64748b', flexShrink:0 }}>
+                    {ini(c.company)}
+                  </div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontWeight:600, fontSize:14 }}>{c.company}</div>
+                    <div style={{ fontSize:11, color:t.textMute }}>{c.position} {c.category && `· ${c.category}`}</div>
+                  </div>
+                  <div style={{ textAlign:'right', flexShrink:0 }}>
+                    <div style={{ fontSize:12, fontWeight:600,
+                      color: overdue?t.overdueText:today?t.todayText:t.textSub }}>
+                      {overdue ? '⚠️ Zaległe' : today ? '🟢 Dziś' : '📅'} {fmtDate(c.followup_date)}
+                    </div>
+                    <div style={{ fontSize:11, color:t.textMute, marginTop:2 }}>
+                      <span style={{ background:`${stage?.color}20`, color:stage?.color,
+                        border:`1px solid ${stage?.color}33`, borderRadius:4,
+                        padding:'1px 6px', fontSize:10 }}>{stage?.label}</span>
+                    </div>
+                  </div>
+                  {c.owner && (() => { const o = OWNERS.find(x => x.id === c.owner); return o
+                    ? <span style={{ background:o.color+'22', color:o.color, border:'1px solid '+o.color+'44',
+                        borderRadius:4, padding:'2px 8px', fontSize:11, fontWeight:600, flexShrink:0 }}>{o.label}</span>
+                    : null })()}
+                </div>
+              )
+            })}
           </div>
         )}
 
@@ -448,11 +562,11 @@ function Pill({ active, color, borderActive, onClick, t, children }: {
   onClick:()=>void; t:Theme; children:React.ReactNode
 }) {
   return (
-    <button onClick={onClick} style={{ padding:'5px 12px', borderRadius:6,
+    <button onClick={onClick} style={{ padding:'4px 10px', borderRadius:6,
       border:`1px solid ${active?borderActive+'88':t.border2}`,
       background:active?color+'22':t.badge, color:active?color:t.textMute,
-      cursor:'pointer', fontSize:12, fontFamily:'inherit', fontWeight:active?600:400,
-      display:'flex', alignItems:'center', gap:5, transition:'all .15s' }}>
+      cursor:'pointer', fontSize:11, fontFamily:'inherit', fontWeight:active?600:400,
+      display:'flex', alignItems:'center', gap:4, transition:'all .15s', whiteSpace:'nowrap' }}>
       {children}
     </button>
   )
@@ -468,22 +582,30 @@ function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddA
   const [actText, setActText] = useState('')
   const [actDate, setActDate] = useState(new Date().toISOString().split('T')[0])
   const stage = STAGES.find(s => s.id === contact.stage)
+  const overdue = isOverdue(contact.followup_date) && contact.stage !== 'won' && contact.stage !== 'lost'
+  const today = isDueToday(contact.followup_date)
 
   return (
     <div style={{ width:360, flexShrink:0, borderLeft:`1px solid ${t.border}`,
       display:'flex', flexDirection:'column', background:t.bgPanel,
       animation:'slideRight .2s ease', overflow:'hidden', transition:'background .25s' }}>
+
       <div style={{ padding:'14px 16px', borderBottom:`1px solid ${t.border}`, flexShrink:0 }}>
         <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between' }}>
           <div style={{ display:'flex', gap:10, alignItems:'center' }}>
             <div style={{ width:38, height:38, borderRadius:'50%', background:t.bg,
-              border:`2px solid ${stage?.color}`, display:'flex', alignItems:'center',
-              justifyContent:'center', fontSize:13, fontWeight:700, color:stage?.color, flexShrink:0 }}>
+              border:`2px solid ${PRIORITY_COLORS[contact.priority]||stage?.color}`,
+              display:'flex', alignItems:'center', justifyContent:'center',
+              fontSize:13, fontWeight:700, color:PRIORITY_COLORS[contact.priority]||stage?.color, flexShrink:0 }}>
               {ini(contact.company)}
             </div>
             <div>
               <div style={{ fontWeight:600, fontSize:15 }}>{contact.company}</div>
-              <div style={{ fontSize:11, color:t.textMute }}>{contact.name}</div>
+              <div style={{ fontSize:11, color:t.textMute, display:'flex', gap:6, alignItems:'center' }}>
+                {contact.name}
+                {contact.category && <span style={{ background:t.badge, border:`1px solid ${t.border2}`,
+                  borderRadius:3, padding:'1px 5px', fontSize:10 }}>{contact.category}</span>}
+              </div>
             </div>
           </div>
           <div style={{ display:'flex', gap:5 }}>
@@ -495,9 +617,19 @@ function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddA
               borderRadius:5, padding:'4px 8px', cursor:'pointer', fontSize:14, color:t.textMute }}>✕</button>
           </div>
         </div>
-        <div style={{ marginTop:12 }}>
+
+        {contact.followup_date && (
+          <div style={{ marginTop:10, padding:'6px 10px', borderRadius:6, fontSize:12, fontWeight:500,
+            background: overdue?t.overdue:today?t.today:t.badge,
+            color: overdue?t.overdueText:today?t.todayText:t.textMute,
+            border:`1px solid ${overdue?t.overdueText+'44':today?t.todayText+'44':t.border2}` }}>
+            📅 Follow-up: {overdue?'⚠️ Zaległe — ':today?'🟢 Dziś — ':''}{fmtDate(contact.followup_date)}
+          </div>
+        )}
+
+        <div style={{ marginTop:10 }}>
           <div style={{ fontSize:10, color:t.textMute, marginBottom:6,
-            textTransform:'uppercase', letterSpacing:'.05em', fontWeight:600 }}>Etap procesu</div>
+            textTransform:'uppercase', letterSpacing:'.05em', fontWeight:600 }}>Etap</div>
           <div style={{ display:'flex', flexWrap:'wrap', gap:4 }}>
             {STAGES.map(s => (
               <button key={s.id} onClick={() => onStageChange(s.id)}
@@ -509,6 +641,7 @@ function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddA
             ))}
           </div>
         </div>
+
         <div style={{ marginTop:10 }}>
           <div style={{ fontSize:10, color:t.textMute, marginBottom:6,
             textTransform:'uppercase', letterSpacing:'.05em', fontWeight:600 }}>Właściciel</div>
@@ -545,6 +678,11 @@ function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddA
             <span style={{ fontSize:12, color:t.textSub }}>{val}</span>
           </div>
         ))}
+        <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:5 }}>
+          <span style={{ fontSize:12 }}>⭐</span>
+          <span style={{ fontSize:10, color:t.textMute, width:60, flexShrink:0 }}>Priorytet</span>
+          <span style={{ fontSize:12, fontWeight:600, color:PRIORITY_COLORS[contact.priority]||t.textSub }}>{contact.priority}/10</span>
+        </div>
         {contact.notes && (
           <div style={{ marginTop:6, background:t.notesBg, borderRadius:6, padding:'8px 10px',
             fontSize:11, color:t.textMute, whiteSpace:'pre-line', border:`1px solid ${t.border}` }}>
@@ -620,7 +758,7 @@ function ContactModal({ contact, t, onSave, onClose }: {
   onSave:(d:Partial<Contact>)=>void; onClose:()=>void
 }) {
   const [form, setForm] = useState<Partial<Contact>>({ ...contact })
-  const set = (k: keyof Contact, v: string) => setForm(p => ({ ...p, [k]: v }))
+  const set = (k: keyof Contact, v: any) => setForm(p => ({ ...p, [k]: v }))
   const inputStyle: React.CSSProperties = {
     background:t.bgInput, border:`1px solid ${t.border2}`, color:t.text,
     borderRadius:7, padding:'8px 11px', fontSize:13, width:'100%', outline:'none', fontFamily:'inherit'
@@ -634,7 +772,7 @@ function ContactModal({ contact, t, onSave, onClose }: {
       display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, padding:16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background:t.bgCard,
         border:`1px solid ${t.border2}`, borderRadius:12, padding:24,
-        width:480, maxHeight:'90vh', overflowY:'auto', animation:'fadeIn .2s ease' }}>
+        width:520, maxHeight:'90vh', overflowY:'auto', animation:'fadeIn .2s ease' }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:18 }}>
           <h2 style={{ fontSize:16, fontWeight:600 }}>{form.id ? '✏️ Edytuj kontakt' : '➕ Nowy kontakt'}</h2>
           <button onClick={onClose} style={{ background:'none', border:'none', color:t.textMute, cursor:'pointer', fontSize:18 }}>✕</button>
@@ -650,6 +788,18 @@ function ContactModal({ contact, t, onSave, onClose }: {
             </div>
           ))}
           <div>
+            <label style={labelStyle}>Kategoria</label>
+            <select value={form.category||''} onChange={e => set('category', e.target.value)} style={inputStyle}>
+              <option value="">— Wybierz —</option>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Priorytet (1-10)</label>
+            <input type="number" min={1} max={10} value={form.priority||5}
+              onChange={e => set('priority', parseInt(e.target.value))} style={inputStyle}/>
+          </div>
+          <div>
             <label style={labelStyle}>Właściciel</label>
             <select value={form.owner||''} onChange={e => set('owner', e.target.value)} style={inputStyle}>
               <option value="">— Brak —</option>
@@ -661,6 +811,10 @@ function ContactModal({ contact, t, onSave, onClose }: {
             <select value={form.stage||'lead'} onChange={e => set('stage', e.target.value)} style={inputStyle}>
               {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
+          </div>
+          <div style={{ gridColumn:'span 2' }}>
+            <label style={labelStyle}>Follow-up date</label>
+            <input type="date" value={form.followup_date||''} onChange={e => set('followup_date', e.target.value)} style={inputStyle}/>
           </div>
           <div style={{ gridColumn:'span 2' }}>
             <label style={labelStyle}>Notatki</label>
@@ -682,3 +836,4 @@ function ContactModal({ contact, t, onSave, onClose }: {
     </div>
   )
 }
+ENDOFFILE
