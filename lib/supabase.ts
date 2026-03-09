@@ -85,3 +85,8 @@ export async function addActivity(
   if (error) throw error
   return data
 }
+
+export async function deleteActivityFn(id: string): Promise<void> {
+  const { error } = await supabase.from('activities').delete().eq('id', id)
+  if (error) throw error
+}

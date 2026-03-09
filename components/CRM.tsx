@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  fetchContacts, upsertContact, deleteContact, addActivity,
+  fetchContacts, upsertContact, deleteContact, addActivity, deleteActivityFn,
   type Contact, type Activity
 } from '@/lib/supabase'
 
@@ -74,7 +74,7 @@ export default function CRM() {
   const [contacts, setContacts]   = useState<Contact[]>([])
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
-  const [view, setView]           = useState<'pipeline'|'list'|'followups'>('pipeline')
+  const [view, setView]           = useState<'pipeline'|'list'|'followups'|'stats'>('pipeline')
   const [selected, setSelected]   = useState<string|null>(null)
   const [editContact, setEditContact] = useState<Partial<Contact>|null>(null)
   const [toast, setToast]         = useState<{msg:string,type:string}|null>(null)
@@ -122,6 +122,19 @@ export default function CRM() {
       showToast('Dodano aktywność ✓')
       await load()
     } catch { showToast('Błąd zapisu','err') }
+    setSaving(false)
+  }
+
+  const handleDeleteActivity = async (contactId: string, actId: string) => {
+    setSaving(true)
+    try {
+      await deleteActivityFn(actId)
+      setContacts(cs => cs.map(c => c.id === contactId
+        ? { ...c, activities: (c.activities ?? []).filter(a => a.id !== actId) }
+        : c
+      ))
+      showToast('Usunięto notatkę','info')
+    } catch { showToast('Błąd usuwania','err') }
     setSaving(false)
   }
 
@@ -178,6 +191,19 @@ export default function CRM() {
     isOverdue(c.followup_date) && c.stage !== 'won' && c.stage !== 'lost'
   ).length
 
+  // Stats
+  const totalActivities = contacts.reduce((s,c) => s + (c.activities?.length ?? 0), 0)
+  const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7)
+  const weekActivities = contacts.reduce((s,c) =>
+    s + (c.activities?.filter(a => new Date(a.created_at) > weekAgo).length ?? 0), 0)
+  const stageStats = STAGES.map(s => ({
+    ...s, count: contacts.filter(c => c.stage === s.id).length
+  }))
+  const catStats = CATEGORIES.map(cat => ({
+    cat, count: contacts.filter(c => c.category === cat).length
+  })).filter(x => x.count > 0)
+  const maxStage = Math.max(...stageStats.map(s => s.count), 1)
+
   if (loading) return (
     <div style={{ fontFamily:"'DM Sans',sans-serif", background:t.bg, minHeight:'100vh',
       display:'flex', alignItems:'center', justifyContent:'center', color:t.textMute }}>
@@ -195,6 +221,7 @@ export default function CRM() {
         ::-webkit-scrollbar-thumb{background:${t.scrollTh};border-radius:3px}
         @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
         @keyframes slideRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+        @keyframes barGrow{from{width:0}to{width:var(--w)}}
       `}</style>
 
       {toast && (
@@ -207,6 +234,7 @@ export default function CRM() {
         </div>
       )}
 
+      {/* TOP BAR */}
       <div style={{ borderBottom:`1px solid ${t.border}`, padding:'0 20px', flexShrink:0,
         background:t.bgCard, transition:'background .25s' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', height:56 }}>
@@ -233,7 +261,7 @@ export default function CRM() {
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ display:'flex', background:t.badge, border:`1px solid ${t.border2}`,
               borderRadius:8, overflow:'hidden' }}>
-              {([['pipeline','⬛','Pipeline'],['list','☰','Lista'],['followups','📅','Follow-upy']] as const).map(([v,icon,label]) => (
+              {([['pipeline','⬛','Pipeline'],['list','☰','Lista'],['followups','📅','Follow-upy'],['stats','📊','Statystyki']] as const).map(([v,icon,label]) => (
                 <button key={v} onClick={() => setView(v)}
                   style={{ padding:'6px 12px', background:view===v?t.border2:'transparent',
                     border:'none', color:view===v?t.text:t.textMute, cursor:'pointer',
@@ -261,6 +289,7 @@ export default function CRM() {
         </div>
       </div>
 
+      {/* FILTER BAR */}
       <div style={{ padding:'10px 20px', borderBottom:`1px solid ${t.border}`, flexShrink:0,
         display:'flex', alignItems:'center', gap:10, flexWrap:'wrap',
         background:t.bgCard, transition:'background .25s' }}>
@@ -293,6 +322,7 @@ export default function CRM() {
 
       <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
 
+        {/* PIPELINE */}
         {view === 'pipeline' && (
           <div style={{ flex:1, overflowX:'auto', padding:'16px 12px', display:'flex', gap:10, alignItems:'flex-start' }}>
             {STAGES.map(stage => {
@@ -356,6 +386,13 @@ export default function CRM() {
                               📅 {overdue?'Zaległe: ':today?'Dziś: ':''}{fmtDate(c.followup_date)}
                             </div>
                           )}
+                          {c.offer_url && (
+                            <div style={{ marginTop:4, fontSize:10 }}>
+                              <a href={c.offer_url} target="_blank" rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                style={{ color:'#3b82f6', textDecoration:'none' }}>📎 Oferta</a>
+                            </div>
+                          )}
                           {c.category && <div style={{ marginTop:4, fontSize:9, color:t.textFade }}>{c.category}</div>}
                           {c.owner && (() => { const o = OWNERS.find(x => x.id === c.owner); return o
                             ? <div style={{ marginTop:4, display:'inline-block', background:o.color+'22',
@@ -375,13 +412,14 @@ export default function CRM() {
           </div>
         )}
 
+        {/* LIST */}
         {view === 'list' && (
           <div style={{ flex:1, overflowY:'auto', padding:'16px 20px' }}>
             <div style={{ background:t.bgCard, border:`1px solid ${t.border}`, borderRadius:10, overflow:'hidden' }}>
               <table style={{ width:'100%', borderCollapse:'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom:`1px solid ${t.border}`, background:t.bgCol }}>
-                    {['Firma','Kategoria','Właściciel','Etap','Priorytet','Follow-up',''].map(h => (
+                    {['Firma','Kategoria','Właściciel','Etap','Priorytet','Follow-up','Oferta',''].map(h => (
                       <th key={h} style={{ padding:'10px 14px', textAlign:'left', fontSize:10,
                         fontWeight:600, color:t.textMute, textTransform:'uppercase', letterSpacing:'.05em' }}>{h}</th>
                     ))}
@@ -438,6 +476,13 @@ export default function CRM() {
                           {c.followup_date ? `${overdue?'⚠️ ':today?'🟢 ':''}${fmtDate(c.followup_date)}` : '—'}
                         </td>
                         <td style={{ padding:'10px 14px' }}>
+                          {c.offer_url
+                            ? <a href={c.offer_url} target="_blank" rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                style={{ color:'#3b82f6', fontSize:12, textDecoration:'none' }}>📎 Oferta</a>
+                            : <span style={{ color:t.textFade, fontSize:11 }}>—</span>}
+                        </td>
+                        <td style={{ padding:'10px 14px' }}>
                           <button onClick={e => { e.stopPropagation(); setEditContact({...c}) }}
                             style={{ background:t.badge, border:`1px solid ${t.border2}`,
                               borderRadius:5, padding:'4px 8px', cursor:'pointer', fontSize:11, color:t.textSub }}>✏️</button>
@@ -451,6 +496,7 @@ export default function CRM() {
           </div>
         )}
 
+        {/* FOLLOW-UPS */}
         {view === 'followups' && (
           <div style={{ flex:1, overflowY:'auto', padding:'16px 20px' }}>
             <div style={{ marginBottom:16, display:'flex', alignItems:'center', gap:10 }}>
@@ -509,6 +555,121 @@ export default function CRM() {
           </div>
         )}
 
+        {/* STATS */}
+        {view === 'stats' && (
+          <div style={{ flex:1, overflowY:'auto', padding:'24px 28px' }}>
+            <h2 style={{ fontSize:18, fontWeight:600, marginBottom:24 }}>📊 Statystyki</h2>
+
+            {/* KPI Cards */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:28 }}>
+              {[
+                { label:'Wszystkich kontaktów', value:contacts.length, icon:'👥', color:'#60a5fa' },
+                { label:'Aktywności łącznie', value:totalActivities, icon:'📋', color:'#a78bfa' },
+                { label:'Aktywności (7 dni)', value:weekActivities, icon:'🔥', color:'#f59e0b' },
+                { label:'Zaległe follow-upy', value:overdueCount, icon:'⚠️', color: overdueCount>0?'#ef4444':'#22c55e' },
+              ].map(kpi => (
+                <div key={kpi.label} style={{ background:t.bgCard, border:`1px solid ${t.border2}`,
+                  borderRadius:10, padding:'16px 18px', animation:'fadeIn .3s ease' }}>
+                  <div style={{ fontSize:22, marginBottom:6 }}>{kpi.icon}</div>
+                  <div style={{ fontSize:26, fontWeight:700, color:kpi.color }}>{kpi.value}</div>
+                  <div style={{ fontSize:11, color:t.textMute, marginTop:3 }}>{kpi.label}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20 }}>
+              {/* Etapy */}
+              <div style={{ background:t.bgCard, border:`1px solid ${t.border2}`, borderRadius:10, padding:'18px 20px' }}>
+                <div style={{ fontWeight:600, fontSize:14, marginBottom:16 }}>Kontakty wg etapu</div>
+                {stageStats.map(s => (
+                  <div key={s.id} style={{ marginBottom:12 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                      <span style={{ fontSize:12, color:t.textSub }}>{s.label}</span>
+                      <span style={{ fontSize:12, fontWeight:600, color:s.color }}>{s.count}</span>
+                    </div>
+                    <div style={{ height:6, background:t.border2, borderRadius:3, overflow:'hidden' }}>
+                      <div style={{ height:'100%', background:s.color, borderRadius:3,
+                        width:`${(s.count/maxStage)*100}%`, transition:'width .6s ease' }}/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Kategorie */}
+              <div style={{ background:t.bgCard, border:`1px solid ${t.border2}`, borderRadius:10, padding:'18px 20px' }}>
+                <div style={{ fontWeight:600, fontSize:14, marginBottom:16 }}>Kontakty wg kategorii</div>
+                {catStats.map((x,i) => {
+                  const colors = ['#60a5fa','#a78bfa','#f59e0b','#22c55e','#ef4444','#14b8a6','#f97316']
+                  const color = colors[i % colors.length]
+                  return (
+                    <div key={x.cat} style={{ marginBottom:12 }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                        <span style={{ fontSize:12, color:t.textSub }}>{x.cat}</span>
+                        <span style={{ fontSize:12, fontWeight:600, color }}>{x.count}</span>
+                      </div>
+                      <div style={{ height:6, background:t.border2, borderRadius:3, overflow:'hidden' }}>
+                        <div style={{ height:'100%', background:color, borderRadius:3,
+                          width:`${(x.count/contacts.length)*100}%`, transition:'width .6s ease' }}/>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Właściciele */}
+              <div style={{ background:t.bgCard, border:`1px solid ${t.border2}`, borderRadius:10, padding:'18px 20px' }}>
+                <div style={{ fontWeight:600, fontSize:14, marginBottom:16 }}>Podział właścicieli</div>
+                {OWNERS.map(o => {
+                  const cnt = contacts.filter(c => c.owner === o.id).length
+                  return (
+                    <div key={o.id} style={{ marginBottom:12 }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                        <span style={{ fontSize:12, color:t.textSub }}>{o.label}</span>
+                        <span style={{ fontSize:12, fontWeight:600, color:o.color }}>{cnt}</span>
+                      </div>
+                      <div style={{ height:6, background:t.border2, borderRadius:3, overflow:'hidden' }}>
+                        <div style={{ height:'100%', background:o.color, borderRadius:3,
+                          width:`${(cnt/contacts.length)*100}%`, transition:'width .6s ease' }}/>
+                      </div>
+                    </div>
+                  )
+                })}
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                    <span style={{ fontSize:12, color:t.textSub }}>Nieprzypisane</span>
+                    <span style={{ fontSize:12, fontWeight:600, color:t.textMute }}>{contacts.filter(c => !c.owner).length}</span>
+                  </div>
+                  <div style={{ height:6, background:t.border2, borderRadius:3, overflow:'hidden' }}>
+                    <div style={{ height:'100%', background:t.textMute, borderRadius:3,
+                      width:`${(contacts.filter(c => !c.owner).length/contacts.length)*100}%`, transition:'width .6s ease' }}/>
+                  </div>
+                </div>
+              </div>
+
+              {/* Top priorytety */}
+              <div style={{ background:t.bgCard, border:`1px solid ${t.border2}`, borderRadius:10, padding:'18px 20px' }}>
+                <div style={{ fontWeight:600, fontSize:14, marginBottom:16 }}>Top 8 — najwyższy priorytet</div>
+                {contacts.slice().sort((a,b) => (b.priority||0)-(a.priority||0)).slice(0,8).map(c => (
+                  <div key={c.id} onClick={() => { setSelected(c.id); setView('pipeline') }}
+                    style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8,
+                      cursor:'pointer', padding:'4px 6px', borderRadius:6, transition:'background .12s' }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = t.bgHover}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                    <div style={{ width:22, height:22, borderRadius:'50%', background:t.bg,
+                      border:`2px solid ${PRIORITY_COLORS[c.priority]||'#64748b'}`,
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      fontSize:8, fontWeight:700, color:PRIORITY_COLORS[c.priority]||'#64748b', flexShrink:0 }}>
+                      {ini(c.company)}
+                    </div>
+                    <span style={{ fontSize:12, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.company}</span>
+                    <span style={{ fontSize:11, fontWeight:700, color:PRIORITY_COLORS[c.priority]||t.textMute }}>{c.priority}/10</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {selContact && (
           <DetailPanel
             contact={selContact} t={t}
@@ -516,6 +677,7 @@ export default function CRM() {
             onStageChange={sid => moveToStage(selContact.id, sid)}
             onOwnerChange={oid => handleOwnerChange(selContact.id, oid)}
             onAddActivity={act => handleAddActivity(selContact.id, act)}
+            onDeleteActivity={(actId) => handleDeleteActivity(selContact.id, actId)}
             onEdit={() => setEditContact({...selContact})}
             onDelete={() => setConfirmDel(selContact)}
           />
@@ -568,10 +730,11 @@ function Pill({ active, color, borderActive, onClick, t, children }: {
   )
 }
 
-function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddActivity, onEdit, onDelete }: {
+function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddActivity, onDeleteActivity, onEdit, onDelete }: {
   contact:Contact; t:Theme; onClose:()=>void;
   onStageChange:(s:string)=>void; onOwnerChange:(o:string)=>void;
   onAddActivity:(a:{type:string;text:string;date:string})=>void;
+  onDeleteActivity:(id:string)=>void;
   onEdit:()=>void; onDelete:()=>void;
 }) {
   const [actType, setActType] = useState('note')
@@ -678,6 +841,17 @@ function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddA
           <span style={{ fontSize:10, color:t.textMute, width:60, flexShrink:0 }}>Priorytet</span>
           <span style={{ fontSize:12, fontWeight:600, color:PRIORITY_COLORS[contact.priority]||t.textSub }}>{contact.priority}/10</span>
         </div>
+        {contact.offer_url && (
+          <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:5 }}>
+            <span style={{ fontSize:12 }}>📎</span>
+            <span style={{ fontSize:10, color:t.textMute, width:60, flexShrink:0 }}>Oferta</span>
+            <a href={contact.offer_url} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize:12, color:'#3b82f6', textDecoration:'none', overflow:'hidden',
+                textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:200 }}>
+              Otwórz link →
+            </a>
+          </div>
+        )}
         {contact.notes && (
           <div style={{ marginTop:6, background:t.notesBg, borderRadius:6, padding:'8px 10px',
             fontSize:11, color:t.textMute, whiteSpace:'pre-line', border:`1px solid ${t.border}` }}>
@@ -736,7 +910,13 @@ function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddA
               <div style={{ flex:1, paddingBottom:i < contact.activities!.length-1 ? 14 : 0 }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:3 }}>
                   <span style={{ fontSize:11, fontWeight:600 }}>{aType.label}</span>
-                  <span style={{ fontSize:10, color:t.textMute }}>{fmtDate(act.date || act.created_at)}</span>
+                  <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                    <span style={{ fontSize:10, color:t.textMute }}>{fmtDate(act.date || act.created_at)}</span>
+                    <button onClick={() => onDeleteActivity(act.id)}
+                      title="Usuń aktywność"
+                      style={{ background:'none', border:'none', cursor:'pointer', fontSize:11,
+                        color:t.textFade, padding:'0 2px', lineHeight:1 }}>✕</button>
+                  </div>
                 </div>
                 <div style={{ fontSize:12, color:t.textSub, lineHeight:1.5 }}>{act.text}</div>
               </div>
@@ -810,6 +990,11 @@ function ContactModal({ contact, t, onSave, onClose }: {
           <div style={{ gridColumn:'span 2' }}>
             <label style={labelStyle}>Follow-up date</label>
             <input type="date" value={form.followup_date||''} onChange={e => set('followup_date', e.target.value)} style={inputStyle}/>
+          </div>
+          <div style={{ gridColumn:'span 2' }}>
+            <label style={labelStyle}>Link do oferty / prezentacji (Google Drive)</label>
+            <input type="url" value={form.offer_url||''} onChange={e => set('offer_url', e.target.value)}
+              placeholder="https://drive.google.com/..." style={inputStyle}/>
           </div>
           <div style={{ gridColumn:'span 2' }}>
             <label style={labelStyle}>Notatki</label>
