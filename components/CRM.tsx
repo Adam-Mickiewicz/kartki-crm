@@ -72,7 +72,7 @@ export default function CRM() {
   const [confirmDel, setConfirmDel] = useState<Contact|null>(null)
   const [dark, setDark]           = useState(true)
   const t: Theme = dark ? T.dark : T.light
-  const toastRef = useRef<ReturnType<typeof setTimeout>>()
+  const toastRef = useRef<ReturnType<typeof setTimeout>>(null)
 
   const load = useCallback(async () => {
     try { setContacts(await fetchContacts()) }
