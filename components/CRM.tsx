@@ -1,4 +1,3 @@
-cat > components/CRM.tsx << 'ENDOFFILE'
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -91,7 +90,7 @@ export default function CRM() {
 
   const load = useCallback(async () => {
     try { setContacts(await fetchContacts()) }
-    catch { showToast('Błąd ładowania danych','err') }
+    catch { showToast('Błąd ładowania','err') }
     setLoading(false)
   }, [])
 
@@ -171,10 +170,13 @@ export default function CRM() {
       && (!fCategory || c.category === fCategory)
   })
 
-  const followups = contacts.filter(c => c.followup_date).sort((a,b) =>
-    new Date(a.followup_date).getTime() - new Date(b.followup_date).getTime()
-  )
-  const overdueCount = followups.filter(c => isOverdue(c.followup_date) && c.stage !== 'won' && c.stage !== 'lost').length
+  const followups = contacts
+    .filter(c => c.followup_date)
+    .sort((a,b) => new Date(a.followup_date).getTime() - new Date(b.followup_date).getTime())
+
+  const overdueCount = followups.filter(c =>
+    isOverdue(c.followup_date) && c.stage !== 'won' && c.stage !== 'lost'
+  ).length
 
   if (loading) return (
     <div style={{ fontFamily:"'DM Sans',sans-serif", background:t.bg, minHeight:'100vh',
@@ -193,7 +195,6 @@ export default function CRM() {
         ::-webkit-scrollbar-thumb{background:${t.scrollTh};border-radius:3px}
         @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
         @keyframes slideRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
-        input[type=date]::-webkit-calendar-picker-indicator{opacity:.5;cursor:pointer}
       `}</style>
 
       {toast && (
@@ -206,7 +207,6 @@ export default function CRM() {
         </div>
       )}
 
-      {/* TOP BAR */}
       <div style={{ borderBottom:`1px solid ${t.border}`, padding:'0 20px', flexShrink:0,
         background:t.bgCard, transition:'background .25s' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', height:56 }}>
@@ -261,23 +261,23 @@ export default function CRM() {
         </div>
       </div>
 
-      {/* FILTER BAR */}
       <div style={{ padding:'10px 20px', borderBottom:`1px solid ${t.border}`, flexShrink:0,
-        display:'flex', alignItems:'center', gap:12, flexWrap:'wrap',
+        display:'flex', alignItems:'center', gap:10, flexWrap:'wrap',
         background:t.bgCard, transition:'background .25s' }}>
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="🔍  Szukaj..."
-          style={{ width:200, background:t.bgInput, border:`1px solid ${t.border2}`,
+          style={{ width:180, background:t.bgInput, border:`1px solid ${t.border2}`,
             color:t.text, borderRadius:7, padding:'7px 11px', fontSize:13, outline:'none', fontFamily:'inherit' }}/>
         <div style={{ display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
-          <span style={{ fontSize:11, color:t.textMute, fontWeight:600, textTransform:'uppercase', letterSpacing:'.04em' }}>Kategoria:</span>
+          <span style={{ fontSize:11, color:t.textMute, fontWeight:600, textTransform:'uppercase', letterSpacing:'.04em' }}>Kat:</span>
           <Pill active={fCategory===''} color={t.textMute} borderActive={t.border2} onClick={() => setFCategory('')} t={t}>Wszystkie</Pill>
           {CATEGORIES.map(cat => (
-            <Pill key={cat} active={fCategory===cat} color={t.accent} borderActive={t.accent} onClick={() => setFCategory(fCategory===cat?'':cat)} t={t}>{cat}</Pill>
+            <Pill key={cat} active={fCategory===cat} color={t.accent} borderActive={t.accent}
+              onClick={() => setFCategory(fCategory===cat?'':cat)} t={t}>{cat}</Pill>
           ))}
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:5 }}>
-          <span style={{ fontSize:11, color:t.textMute, fontWeight:600, textTransform:'uppercase', letterSpacing:'.04em' }}>Właściciel:</span>
+          <span style={{ fontSize:11, color:t.textMute, fontWeight:600, textTransform:'uppercase', letterSpacing:'.04em' }}>Kto:</span>
           <Pill active={fOwner===''} color={t.textMute} borderActive={t.border2} onClick={() => setFOwner('')} t={t}>Wszyscy</Pill>
           {OWNERS.map(o => (
             <Pill key={o.id} active={fOwner===o.id} color={o.color} borderActive={o.color}
@@ -293,7 +293,6 @@ export default function CRM() {
 
       <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
 
-        {/* PIPELINE */}
         {view === 'pipeline' && (
           <div style={{ flex:1, overflowX:'auto', padding:'16px 12px', display:'flex', gap:10, alignItems:'flex-start' }}>
             {STAGES.map(stage => {
@@ -331,8 +330,7 @@ export default function CRM() {
                           onClick={() => setSelected(c.id)}
                           style={{ background:isSel?t.selCard:t.bgCard,
                             border:`1px solid ${isSel?t.selBorder:overdue?t.overdueText+'44':t.border2}`,
-                            borderRadius:8, padding:'10px', cursor:'pointer',
-                            transition:'all .12s', animation:'fadeIn .2s ease' }}>
+                            borderRadius:8, padding:'10px', cursor:'pointer', transition:'all .12s', animation:'fadeIn .2s ease' }}>
                           <div style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
                             <div style={{ width:26, height:26, borderRadius:'50%', background:t.bg,
                               border:`2px solid ${PRIORITY_COLORS[c.priority]||'#64748b'}`,
@@ -354,7 +352,7 @@ export default function CRM() {
                             <div style={{ marginTop:6, fontSize:10, fontWeight:500,
                               color: overdue?t.overdueText:today?t.todayText:t.textMute,
                               background: overdue?t.overdue:today?t.today:'transparent',
-                              borderRadius:4, padding: (overdue||today)?'2px 5px':'0' }}>
+                              borderRadius:4, padding:(overdue||today)?'2px 5px':'0' }}>
                               📅 {overdue?'Zaległe: ':today?'Dziś: ':''}{fmtDate(c.followup_date)}
                             </div>
                           )}
@@ -377,7 +375,6 @@ export default function CRM() {
           </div>
         )}
 
-        {/* LIST */}
         {view === 'list' && (
           <div style={{ flex:1, overflowY:'auto', padding:'16px 20px' }}>
             <div style={{ background:t.bgCard, border:`1px solid ${t.border}`, borderRadius:10, overflow:'hidden' }}>
@@ -437,7 +434,7 @@ export default function CRM() {
                         </td>
                         <td style={{ padding:'10px 14px', fontSize:11,
                           color: overdue?t.overdueText:today?t.todayText:t.textMute,
-                          fontWeight: (overdue||today)?600:400 }}>
+                          fontWeight:(overdue||today)?600:400 }}>
                           {c.followup_date ? `${overdue?'⚠️ ':today?'🟢 ':''}${fmtDate(c.followup_date)}` : '—'}
                         </td>
                         <td style={{ padding:'10px 14px' }}>
@@ -454,7 +451,6 @@ export default function CRM() {
           </div>
         )}
 
-        {/* FOLLOW-UPS */}
         {view === 'followups' && (
           <div style={{ flex:1, overflowY:'auto', padding:'16px 20px' }}>
             <div style={{ marginBottom:16, display:'flex', alignItems:'center', gap:10 }}>
@@ -476,10 +472,10 @@ export default function CRM() {
               const today = isDueToday(c.followup_date)
               return (
                 <div key={c.id} onClick={() => { setSelected(c.id); setView('pipeline') }}
-                  style={{ background:t.bgCard, border:`1px solid ${overdue?t.overdueText+'66':today?t.todayText+'66':t.border2}`,
+                  style={{ background:t.bgCard,
+                    border:`1px solid ${overdue?t.overdueText+'66':today?t.todayText+'66':t.border2}`,
                     borderRadius:10, padding:'14px 16px', marginBottom:8, cursor:'pointer',
-                    display:'flex', alignItems:'center', gap:14, transition:'all .12s',
-                    animation:'fadeIn .2s ease' }}
+                    display:'flex', alignItems:'center', gap:14, transition:'all .12s', animation:'fadeIn .2s ease' }}
                   onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = t.bgHover}
                   onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = t.bgCard}>
                   <div style={{ width:36, height:36, borderRadius:'50%', background:t.bg,
@@ -490,14 +486,14 @@ export default function CRM() {
                   </div>
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontWeight:600, fontSize:14 }}>{c.company}</div>
-                    <div style={{ fontSize:11, color:t.textMute }}>{c.position} {c.category && `· ${c.category}`}</div>
+                    <div style={{ fontSize:11, color:t.textMute }}>{c.position}{c.category && ` · ${c.category}`}</div>
                   </div>
                   <div style={{ textAlign:'right', flexShrink:0 }}>
                     <div style={{ fontSize:12, fontWeight:600,
                       color: overdue?t.overdueText:today?t.todayText:t.textSub }}>
                       {overdue ? '⚠️ Zaległe' : today ? '🟢 Dziś' : '📅'} {fmtDate(c.followup_date)}
                     </div>
-                    <div style={{ fontSize:11, color:t.textMute, marginTop:2 }}>
+                    <div style={{ marginTop:2 }}>
                       <span style={{ background:`${stage?.color}20`, color:stage?.color,
                         border:`1px solid ${stage?.color}33`, borderRadius:4,
                         padding:'1px 6px', fontSize:10 }}>{stage?.label}</span>
@@ -589,7 +585,6 @@ function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddA
     <div style={{ width:360, flexShrink:0, borderLeft:`1px solid ${t.border}`,
       display:'flex', flexDirection:'column', background:t.bgPanel,
       animation:'slideRight .2s ease', overflow:'hidden', transition:'background .25s' }}>
-
       <div style={{ padding:'14px 16px', borderBottom:`1px solid ${t.border}`, flexShrink:0 }}>
         <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between' }}>
           <div style={{ display:'flex', gap:10, alignItems:'center' }}>
@@ -623,7 +618,7 @@ function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddA
             background: overdue?t.overdue:today?t.today:t.badge,
             color: overdue?t.overdueText:today?t.todayText:t.textMute,
             border:`1px solid ${overdue?t.overdueText+'44':today?t.todayText+'44':t.border2}` }}>
-            📅 Follow-up: {overdue?'⚠️ Zaległe — ':today?'🟢 Dziś — ':''}{fmtDate(contact.followup_date)}
+            📅 {overdue?'⚠️ Zaległe — ':today?'🟢 Dziś — ':''}{fmtDate(contact.followup_date)}
           </div>
         )}
 
@@ -704,7 +699,7 @@ function DetailPanel({ contact, t, onClose, onStageChange, onOwnerChange, onAddA
           ))}
         </div>
         <textarea value={actText} onChange={e => setActText(e.target.value)}
-          placeholder="Co się wydarzyło? Wpisz notatkę..." rows={2}
+          placeholder="Co się wydarzyło?" rows={2}
           style={{ marginBottom:6, fontSize:12, background:t.bgInput,
             border:`1px solid ${t.border2}`, color:t.text, borderRadius:7,
             padding:'8px 11px', width:'100%', resize:'vertical', fontFamily:'inherit', outline:'none' }}/>
@@ -836,4 +831,3 @@ function ContactModal({ contact, t, onSave, onClose }: {
     </div>
   )
 }
-ENDOFFILE
