@@ -105,7 +105,7 @@ export default function CRM() {
         ? { ...c, activities: [newAct, ...(c.activities ?? [])] }
         : c
       ))
-      showToast('Dodano aktywność ✓')
+      showToast('Dodano aktywność ✓'); await load()
     } catch { showToast('Błąd zapisu','err') }
     setSaving(false)
   }
@@ -125,7 +125,7 @@ export default function CRM() {
       const saved = await upsertContact(data)
       if (data.id) {
         setContacts(cs => cs.map(c => c.id === data.id ? { ...c, ...saved } : c))
-        showToast('Zapisano ✓')
+        showToast('Zapisano ✓'); await load()
       } else {
         setContacts(cs => [{ ...saved, activities: [] }, ...cs])
         showToast('Dodano kontakt ✓')
