@@ -33,7 +33,7 @@ export type Contact = {
 export async function fetchContacts(): Promise<Contact[]> {
   const { data, error } = await supabase
     .from('contacts')
-    .select('id, name, company, position, phone, email, network, stage, notes, owner, created_at, updated_at, activities(id, contact_id, type, text, date, created_at)')
+    .select('id,name,company,position,phone,email,network,stage,notes,owner,created_at,updated_at,activities(id,contact_id,type,text,date,created_at)')
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map(c => ({
@@ -47,13 +47,22 @@ export async function fetchContacts(): Promise<Contact[]> {
 
 export async function upsertContact(contact: Partial<Contact>): Promise<Contact> {
   const { activities, ...rest } = contact as any
-  const { data, error } = await supabase
-    .from('contacts')
-    .upsert(rest)
-    .select()
-    .single()
-  if (error) throw error
-  return data
+  if (rest.id) {
+    const { error } = await supabase
+      .from('contacts')
+      .update(rest)
+      .eq('id', rest.id)
+    if (error) throw error
+    return rest as Contact
+  } else {
+    const { data, error } = await supabase
+      .from('contacts')
+      .insert(rest)
+      .select('id,name,company,position,phone,email,network,stage,notes,owner,created_at,updated_at')
+      .single()
+    if (error) throw error
+    return data
+  }
 }
 
 export async function deleteContact(id: string): Promise<void> {
@@ -68,7 +77,7 @@ export async function addActivity(
   const { data, error } = await supabase
     .from('activities')
     .insert({ contact_id: contactId, ...act })
-    .select()
+    .select('id,contact_id,type,text,date,created_at')
     .single()
   if (error) throw error
   return data
