@@ -28,6 +28,7 @@ export type Contact = {
   category: string
   priority: number
   followup_date: string
+  offer_url: string
   created_at: string
   updated_at: string
   activities?: Activity[]
