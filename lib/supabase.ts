@@ -33,7 +33,7 @@ export type Contact = {
 export async function fetchContacts(): Promise<Contact[]> {
   const { data, error } = await supabase
     .from('contacts')
-    .select('*, activities(*)')
+    .select('id, name, company, position, phone, email, network, stage, notes, owner, created_at, updated_at, activities(id, contact_id, type, text, date, created_at)')
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []).map(c => ({
