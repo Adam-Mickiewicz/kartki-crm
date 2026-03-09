@@ -55,7 +55,7 @@ const T = {
   }
 } as const
 
-type Theme = typeof T.dark
+type Theme = typeof T.dark | typeof T.light
 
 export default function CRM() {
   const [contacts, setContacts]   = useState<Contact[]>([])
