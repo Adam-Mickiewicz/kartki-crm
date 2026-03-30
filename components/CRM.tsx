@@ -157,7 +157,7 @@ export default function CRM() {
   const handleSaveContact = async (data: Partial<Contact>) => {
     setSaving(true)
     try {
-      const saved = await upsertContact(data)
+      const saved = await upsertContact({ ...data, updated_at: new Date().toISOString() })
       if (data.id) {
         await load()
         showToast('Zapisano ✓')
@@ -207,7 +207,8 @@ export default function CRM() {
     const lastActivity = new Date(c.activities[0].created_at).getTime()
     const lastUpdated  = new Date(c.updated_at).getTime()
     const lastInteraction = Math.max(lastActivity, lastUpdated)
-    return (now - lastInteraction) >= REMINDER_DAYS * 24 * 60 * 60 * 1000
+    const daysSince = (now - lastInteraction) / (1000 * 60 * 60 * 24)
+    return daysSince > REMINDER_DAYS
   })
 
   // Stats
