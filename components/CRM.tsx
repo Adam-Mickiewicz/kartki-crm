@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import * as XLSX from 'xlsx'
 import {
   fetchContacts, upsertContact, deleteContact, addActivity, deleteActivityFn,
   type Contact, type Activity
@@ -88,6 +89,7 @@ export default function CRM() {
   const [confirmDel, setConfirmDel] = useState<Contact|null>(null)
   const [dark, setDark]           = useState(false)
   const [dismissedReminders, setDismissedReminders] = useState<Set<string>>(new Set())
+  const [showImport, setShowImport] = useState(false)
   const t: Theme = dark ? T.dark : T.light
   const toastRef = useRef<ReturnType<typeof setTimeout>>(null)
 
@@ -292,6 +294,11 @@ export default function CRM() {
                 background:t.badge, cursor:'pointer', fontSize:16,
                 display:'flex', alignItems:'center', justifyContent:'center' }}>
               {dark ? '☀️' : '🌙'}
+            </button>
+            <button onClick={() => setShowImport(true)}
+              style={{ background:t.badge, color:t.textSub, border:`1px solid ${t.border2}`, borderRadius:7,
+                padding:'7px 14px', fontFamily:'inherit', fontWeight:500, fontSize:13, cursor:'pointer' }}>
+              ⬆ Import XLS
             </button>
             <button onClick={() => setEditContact({ stage:'lead', owner:'', activities:[], priority:5 })}
               style={{ background:t.accent, color:t.accentFg, border:'none', borderRadius:7,
@@ -761,6 +768,22 @@ export default function CRM() {
       {editContact && (
         <ContactModal contact={editContact} t={t} onSave={handleSaveContact} onClose={() => setEditContact(null)}/>
       )}
+
+      {showImport && (
+        <ImportModal t={t} onClose={() => setShowImport(false)}
+          onImport={async (rows) => {
+            setSaving(true)
+            let ok = 0
+            for (const row of rows) {
+              try { await upsertContact(row); ok++ } catch {}
+            }
+            await load()
+            setSaving(false)
+            setShowImport(false)
+            showToast(`Zaimportowano ${ok} z ${rows.length} kontaktów ✓`)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -1061,6 +1084,323 @@ function ContactModal({ contact, t, onSave, onClose }: {
               padding:'8px 16px', cursor:'pointer', fontFamily:'inherit', fontWeight:600, fontSize:13 }}>
             {form.id ? 'Zapisz zmiany' : 'Dodaj kontakt'}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── IMPORT MODAL ────────────────────────────────────────────────────────────
+
+const IMPORT_FIELDS: { id: keyof Contact | ''; label: string; required?: boolean }[] = [
+  { id: '',             label: '— Pomiń —' },
+  { id: 'company',      label: 'Firma',              required: true },
+  { id: 'name',         label: 'Imię i nazwisko' },
+  { id: 'position',     label: 'Stanowisko' },
+  { id: 'phone',        label: 'Telefon' },
+  { id: 'email',        label: 'E-mail' },
+  { id: 'network',      label: 'Sieć / Kanał' },
+  { id: 'category',     label: 'Kategoria' },
+  { id: 'owner',        label: 'Właściciel (MP/KK)' },
+  { id: 'stage',        label: 'Etap' },
+  { id: 'priority',     label: 'Priorytet (1-10)' },
+  { id: 'followup_date',label: 'Follow-up date' },
+  { id: 'offer_url',    label: 'Link do oferty' },
+  { id: 'notes',        label: 'Notatki' },
+]
+
+function autoMap(col: string): keyof Contact | '' {
+  const c = col.toLowerCase().replace(/[\s_\-]/g, '')
+  if (c.includes('firma') || c.includes('company') || c.includes('nazwa')) return 'company'
+  if (c.includes('imie') || c.includes('name') || c.includes('osoba') || c.includes('kontakt')) return 'name'
+  if (c.includes('stanowisko') || c.includes('position') || c.includes('rola')) return 'position'
+  if (c.includes('tel') || c.includes('phone') || c.includes('mob')) return 'phone'
+  if (c.includes('mail') || c.includes('email')) return 'email'
+  if (c.includes('siec') || c.includes('network') || c.includes('kanal')) return 'network'
+  if (c.includes('kategoria') || c.includes('category') || c.includes('typ')) return 'category'
+  if (c.includes('owner') || c.includes('opiekun') || c.includes('kto')) return 'owner'
+  if (c.includes('etap') || c.includes('stage') || c.includes('status')) return 'stage'
+  if (c.includes('priorytet') || c.includes('priority')) return 'priority'
+  if (c.includes('followup') || c.includes('follow') || c.includes('data')) return 'followup_date'
+  if (c.includes('oferta') || c.includes('offer') || c.includes('link') || c.includes('url')) return 'offer_url'
+  if (c.includes('notatk') || c.includes('note') || c.includes('uwag')) return 'notes'
+  return ''
+}
+
+function validateRow(row: Record<string, string>, mapping: Record<string, keyof Contact | ''>): string[] {
+  const errors: string[] = []
+  const mapped: Partial<Contact> = {}
+  for (const [col, field] of Object.entries(mapping)) {
+    if (field && row[col] !== undefined) (mapped as any)[field] = row[col]
+  }
+  if (!mapped.company?.trim()) errors.push('Brak nazwy firmy')
+  if (mapped.priority !== undefined) {
+    const p = Number(mapped.priority)
+    if (isNaN(p) || p < 1 || p > 10) errors.push('Priorytet musi być 1-10')
+  }
+  if (mapped.followup_date) {
+    const d = new Date(mapped.followup_date as string)
+    if (isNaN(d.getTime())) errors.push('Nieprawidłowy format daty follow-up')
+  }
+  if (mapped.owner && !['MP','KK',''].includes(String(mapped.owner).trim())) {
+    errors.push(`Nieznany właściciel "${mapped.owner}" (dozwolone: MP, KK)`)
+  }
+  if (mapped.stage && !STAGES.find(s => s.id === String(mapped.stage).trim())) {
+    errors.push(`Nieznany etap "${mapped.stage}"`)
+  }
+  return errors
+}
+
+function buildContact(row: Record<string, string>, mapping: Record<string, keyof Contact | ''>): Partial<Contact> {
+  const c: Partial<Contact> = { stage: 'lead', priority: 5, owner: '' }
+  for (const [col, field] of Object.entries(mapping)) {
+    if (!field || row[col] === undefined || row[col] === '') continue
+    const val = row[col].trim()
+    if (field === 'priority') (c as any)[field] = Math.min(10, Math.max(1, parseInt(val) || 5))
+    else if (field === 'followup_date') {
+      const d = new Date(val)
+      ;(c as any)[field] = isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0]
+    }
+    else (c as any)[field] = val
+  }
+  return c
+}
+
+function ImportModal({ t, onClose, onImport }: {
+  t: Theme
+  onClose: () => void
+  onImport: (rows: Partial<Contact>[]) => Promise<void>
+}) {
+  const [step, setStep]       = useState<1|2|3>(1)
+  const [headers, setHeaders] = useState<string[]>([])
+  const [rows, setRows]       = useState<Record<string, string>[]>([])
+  const [mapping, setMapping] = useState<Record<string, keyof Contact | ''>>({})
+  const [importing, setImporting] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const inputStyle: React.CSSProperties = {
+    background: t.bgInput, border: `1px solid ${t.border2}`, color: t.text,
+    borderRadius: 7, padding: '6px 10px', fontSize: 12, outline: 'none', fontFamily: 'inherit', width: '100%'
+  }
+
+  function handleFile(file: File) {
+    const reader = new FileReader()
+    reader.onload = e => {
+      const wb = XLSX.read(e.target!.result, { type: 'array', cellDates: true })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const data: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+      if (data.length < 2) return
+      const hdrs = (data[0] as string[]).map(h => String(h ?? '').trim())
+      const dataRows = data.slice(1).filter(r => r.some(v => v !== '')).map(r =>
+        Object.fromEntries(hdrs.map((h, i) => [h, String(r[i] ?? '').trim()]))
+      )
+      setHeaders(hdrs)
+      setRows(dataRows)
+      const initMap: Record<string, keyof Contact | ''> = {}
+      hdrs.forEach(h => { initMap[h] = autoMap(h) })
+      setMapping(initMap)
+      setStep(2)
+    }
+    reader.readAsArrayBuffer(file)
+  }
+
+  const validatedRows = rows.map(r => ({
+    row: r,
+    errors: validateRow(r, mapping),
+    contact: buildContact(r, mapping),
+  }))
+  const validCount   = validatedRows.filter(r => r.errors.length === 0).length
+  const invalidCount = validatedRows.length - validCount
+  const companyMapped = Object.values(mapping).includes('company')
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 10, color: t.textMute, fontWeight: 600,
+    textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: 3
+  }
+
+  return (
+    <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.65)',
+      display:'flex', alignItems:'center', justifyContent:'center', zIndex:1100, padding:16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background:t.bgCard,
+        border:`1px solid ${t.border2}`, borderRadius:12,
+        width: step === 3 ? 900 : 580, maxWidth:'95vw',
+        maxHeight:'90vh', display:'flex', flexDirection:'column', animation:'fadeIn .2s ease' }}>
+
+        {/* Header */}
+        <div style={{ padding:'16px 20px', borderBottom:`1px solid ${t.border}`,
+          display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+          <div>
+            <div style={{ fontWeight:600, fontSize:15 }}>⬆ Import kontaktów z XLS</div>
+            <div style={{ fontSize:11, color:t.textMute, marginTop:2 }}>
+              {step === 1 && 'Krok 1 z 3 — wgraj plik'}
+              {step === 2 && `Krok 2 z 3 — przypisz kolumny (${headers.length} kolumn, ${rows.length} wierszy)`}
+              {step === 3 && `Krok 3 z 3 — podgląd i import (${validCount} poprawnych, ${invalidCount} z błędami)`}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background:'none', border:'none',
+            color:t.textMute, cursor:'pointer', fontSize:18 }}>✕</button>
+        </div>
+
+        {/* Step indicators */}
+        <div style={{ padding:'10px 20px', borderBottom:`1px solid ${t.border}`,
+          display:'flex', gap:6, flexShrink:0 }}>
+          {([1,2,3] as const).map(n => (
+            <div key={n} style={{ display:'flex', alignItems:'center', gap:6 }}>
+              <div style={{ width:22, height:22, borderRadius:'50%', fontSize:11, fontWeight:700,
+                display:'flex', alignItems:'center', justifyContent:'center',
+                background: step >= n ? t.accent : t.border2,
+                color: step >= n ? t.accentFg : t.textMute }}>{n}</div>
+              <span style={{ fontSize:11, color: step >= n ? t.text : t.textMute }}>
+                {n===1?'Plik':n===2?'Kolumny':'Podgląd'}
+              </span>
+              {n < 3 && <div style={{ width:24, height:1, background:t.border2 }}/>}
+            </div>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div style={{ flex:1, overflowY:'auto', padding:'20px' }}>
+
+          {/* STEP 1 */}
+          {step === 1 && (
+            <div
+              onDragOver={e => { e.preventDefault() }}
+              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}
+              onClick={() => fileRef.current?.click()}
+              style={{ border:`2px dashed ${t.border2}`, borderRadius:10, padding:'48px 24px',
+                textAlign:'center', cursor:'pointer', transition:'border-color .15s' }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = t.accent}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = t.border2}>
+              <div style={{ fontSize:36, marginBottom:12 }}>📂</div>
+              <div style={{ fontWeight:600, fontSize:14, marginBottom:6 }}>Przeciągnij plik lub kliknij</div>
+              <div style={{ fontSize:12, color:t.textMute }}>Obsługiwane formaty: .xlsx, .xls, .csv</div>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display:'none' }}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }}/>
+            </div>
+          )}
+
+          {/* STEP 2 */}
+          {step === 2 && (
+            <div>
+              <div style={{ marginBottom:12, fontSize:12, color:t.textMute }}>
+                Przypisz każdą kolumnę z pliku do odpowiedniego pola. Kolumny oznaczone jako <strong>— Pomiń —</strong> zostaną zignorowane.
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                {headers.map(h => {
+                  const preview = rows.slice(0,2).map(r => r[h]).filter(Boolean).join(', ')
+                  const isDuplicate = headers.some(other => other !== h && mapping[other] && mapping[other] === mapping[h] && (mapping[h] as string) !== '')
+                  return (
+                    <div key={h} style={{ background:t.bgCol, border:`1px solid ${isDuplicate?'#ef4444':t.border2}`,
+                      borderRadius:7, padding:'10px 12px' }}>
+                      <label style={labelStyle}>{h}</label>
+                      {preview && <div style={{ fontSize:10, color:t.textFade, marginBottom:5,
+                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                        np. {preview}</div>}
+                      <select value={mapping[h] ?? ''} onChange={e => setMapping(m => ({ ...m, [h]: e.target.value as keyof Contact | '' }))}
+                        style={inputStyle}>
+                        {IMPORT_FIELDS.map(f => (
+                          <option key={f.id} value={f.id}>{f.label}{f.required?' *':''}</option>
+                        ))}
+                      </select>
+                      {isDuplicate && <div style={{ fontSize:10, color:'#ef4444', marginTop:4 }}>
+                        ⚠ To pole jest już przypisane do innej kolumny
+                      </div>}
+                    </div>
+                  )
+                })}
+              </div>
+              {!companyMapped && (
+                <div style={{ marginTop:12, background:t.toastErr, border:`1px solid ${t.toastErrB}`,
+                  borderRadius:7, padding:'8px 12px', fontSize:12, color:t.toastErrB }}>
+                  ⚠ Pole <strong>Firma</strong> jest wymagane — przypisz je do jednej z kolumn.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* STEP 3 */}
+          {step === 3 && (
+            <div>
+              {invalidCount > 0 && (
+                <div style={{ marginBottom:12, background:t.toastErr, border:`1px solid ${t.toastErrB}`,
+                  borderRadius:7, padding:'8px 12px', fontSize:12, color:t.toastErrB }}>
+                  ⚠ {invalidCount} {invalidCount === 1 ? 'wiersz ma błędy' : 'wierszy ma błędy'} — zostaną pominięte przy imporcie.
+                </div>
+              )}
+              <div style={{ border:`1px solid ${t.border2}`, borderRadius:8, overflow:'hidden' }}>
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                  <thead>
+                    <tr style={{ background:t.bgCol, borderBottom:`1px solid ${t.border}` }}>
+                      <th style={{ padding:'7px 10px', textAlign:'left', color:t.textMute, fontWeight:600, width:24 }}>#</th>
+                      <th style={{ padding:'7px 10px', textAlign:'left', color:t.textMute, fontWeight:600 }}>Firma</th>
+                      <th style={{ padding:'7px 10px', textAlign:'left', color:t.textMute, fontWeight:600 }}>Imię</th>
+                      <th style={{ padding:'7px 10px', textAlign:'left', color:t.textMute, fontWeight:600 }}>Kategoria</th>
+                      <th style={{ padding:'7px 10px', textAlign:'left', color:t.textMute, fontWeight:600 }}>Etap</th>
+                      <th style={{ padding:'7px 10px', textAlign:'left', color:t.textMute, fontWeight:600 }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {validatedRows.map(({ contact: c, errors }, i) => (
+                      <tr key={i} style={{ borderBottom:`1px solid ${t.border3}`,
+                        background: errors.length ? (t === T.dark ? '#1a0a0a' : '#fff5f5') : 'transparent' }}>
+                        <td style={{ padding:'6px 10px', color:t.textFade }}>{i+1}</td>
+                        <td style={{ padding:'6px 10px', fontWeight:500 }}>{c.company || <span style={{ color:t.textFade }}>—</span>}</td>
+                        <td style={{ padding:'6px 10px', color:t.textMute }}>{c.name || '—'}</td>
+                        <td style={{ padding:'6px 10px', color:t.textMute }}>{c.category || '—'}</td>
+                        <td style={{ padding:'6px 10px', color:t.textMute }}>
+                          {STAGES.find(s => s.id === c.stage)?.label ?? c.stage ?? 'lead'}
+                        </td>
+                        <td style={{ padding:'6px 10px' }}>
+                          {errors.length === 0
+                            ? <span style={{ color:'#22c55e', fontWeight:600 }}>✓ OK</span>
+                            : <span style={{ color:'#ef4444' }} title={errors.join('\n')}>
+                                ✕ {errors[0]}{errors.length > 1 ? ` (+${errors.length-1})` : ''}
+                              </span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding:'14px 20px', borderTop:`1px solid ${t.border}`,
+          display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0 }}>
+          <button onClick={() => step > 1 ? setStep(s => (s - 1) as 1|2|3) : onClose()}
+            style={{ background:t.badge, border:`1px solid ${t.border2}`, borderRadius:7,
+              padding:'8px 16px', cursor:'pointer', color:t.textSub, fontFamily:'inherit', fontSize:13 }}>
+            {step === 1 ? 'Anuluj' : '← Wróć'}
+          </button>
+          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+            {step === 3 && <span style={{ fontSize:12, color:t.textMute }}>{validCount} kontaktów gotowych do importu</span>}
+            {step < 3 && (
+              <button
+                disabled={step === 2 && !companyMapped}
+                onClick={() => setStep(s => (s + 1) as 1|2|3)}
+                style={{ background: (step === 2 && !companyMapped) ? t.border2 : t.accent,
+                  color: (step === 2 && !companyMapped) ? t.textMute : t.accentFg,
+                  border:'none', borderRadius:7, padding:'8px 16px',
+                  cursor: (step === 2 && !companyMapped) ? 'not-allowed' : 'pointer',
+                  fontFamily:'inherit', fontWeight:600, fontSize:13 }}>
+                Dalej →
+              </button>
+            )}
+            {step === 3 && (
+              <button disabled={validCount === 0 || importing} onClick={async () => {
+                setImporting(true)
+                await onImport(validatedRows.filter(r => r.errors.length === 0).map(r => r.contact))
+              }} style={{ background: validCount === 0 ? t.border2 : t.accent,
+                color: validCount === 0 ? t.textMute : t.accentFg,
+                border:'none', borderRadius:7, padding:'8px 18px',
+                cursor: validCount === 0 ? 'not-allowed' : 'pointer',
+                fontFamily:'inherit', fontWeight:600, fontSize:13 }}>
+                {importing ? 'Importuję...' : `⬆ Importuj ${validCount} kontaktów`}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
