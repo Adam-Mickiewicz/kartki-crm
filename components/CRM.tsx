@@ -9,6 +9,8 @@ import {
 const STAGES = [
   { id: 'lead',         label: 'Nowy lead',       color: '#64748b' },
   { id: 'contact',      label: 'Pierwszy kontakt', color: '#60a5fa' },
+  { id: 'followup1',    label: 'Follow-up 1',      color: '#06b6d4' },
+  { id: 'followup2',    label: 'Follow-up 2',      color: '#8b5cf6' },
   { id: 'presentation', label: 'Prezentacja',      color: '#a78bfa' },
   { id: 'negotiation',  label: 'Negocjacje',       color: '#f59e0b' },
   { id: 'won',          label: 'Wygrany',          color: '#22c55e' },
@@ -85,6 +87,7 @@ export default function CRM() {
   const [dragOver, setDragOver]   = useState<string|null>(null)
   const [confirmDel, setConfirmDel] = useState<Contact|null>(null)
   const [dark, setDark]           = useState(false)
+  const [dismissedReminders, setDismissedReminders] = useState<Set<string>>(new Set())
   const t: Theme = dark ? T.dark : T.light
   const toastRef = useRef<ReturnType<typeof setTimeout>>(null)
 
@@ -190,6 +193,16 @@ export default function CRM() {
   const overdueCount = followups.filter(c =>
     isOverdue(c.followup_date) && c.stage !== 'won' && c.stage !== 'lost'
   ).length
+
+  const now = Date.now()
+  const reminderContacts = contacts.filter(c => {
+    if (c.stage === 'won' || c.stage === 'lost') return false
+    if (dismissedReminders.has(c.id)) return false
+    const lastDate = c.activities?.length
+      ? new Date(c.activities[0].created_at).getTime()
+      : new Date(c.created_at).getTime()
+    return (now - lastDate) >= 7 * 24 * 60 * 60 * 1000
+  })
 
   // Stats
   const totalActivities = contacts.reduce((s,c) => s + (c.activities?.length ?? 0), 0)
@@ -319,6 +332,43 @@ export default function CRM() {
         </div>
         <span style={{ fontSize:11, color:t.textFade, marginLeft:'auto' }}>{filtered.length} kontaktów</span>
       </div>
+
+      {/* REMINDER BANNER */}
+      {reminderContacts.length > 0 && (
+        <div style={{ padding:'8px 20px', borderBottom:`1px solid ${t.border}`,
+          background: dark ? '#1a1400' : '#fffbeb', flexShrink:0, display:'flex', alignItems:'flex-start', gap:10 }}>
+          <span style={{ fontSize:14, flexShrink:0, marginTop:1 }}>⏰</span>
+          <div style={{ flex:1, minWidth:0 }}>
+            <span style={{ fontSize:11, fontWeight:700, color:'#f59e0b', textTransform:'uppercase',
+              letterSpacing:'.06em', display:'block', marginBottom:4 }}>Czas na kontakt</span>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+              {reminderContacts.map(c => {
+                const days = Math.floor((now - (c.activities?.length
+                  ? new Date(c.activities[0].created_at).getTime()
+                  : new Date(c.created_at).getTime())) / (1000 * 60 * 60 * 24))
+                return (
+                  <div key={c.id} style={{ display:'flex', alignItems:'center', gap:5,
+                    background: dark ? '#2a1f00' : '#fef3c7',
+                    border:'1px solid #f59e0b44', borderRadius:6, padding:'3px 8px 3px 8px' }}>
+                    <button onClick={() => { setSelected(c.id); if (view !== 'pipeline') setView('pipeline') }}
+                      style={{ background:'none', border:'none', cursor:'pointer', padding:0,
+                        fontSize:12, color: dark ? '#fbbf24' : '#92400e', fontWeight:600 }}>
+                      {c.company}
+                    </button>
+                    <span style={{ fontSize:10, color: dark ? '#d97706' : '#b45309' }}>
+                      — {days} {days === 1 ? 'dzień' : 'dni'} temu
+                    </span>
+                    <button onClick={() => setDismissedReminders(s => new Set([...s, c.id]))}
+                      title="Odrzuć"
+                      style={{ background:'none', border:'none', cursor:'pointer',
+                        fontSize:10, color: dark ? '#78716c' : '#a8a29e', padding:'0 0 0 2px', lineHeight:1 }}>✕</button>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
 
