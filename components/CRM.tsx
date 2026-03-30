@@ -1119,21 +1119,41 @@ const IMPORT_FIELDS: { id: keyof Contact | ''; label: string; required?: boolean
   { id: 'notes',        label: 'Notatki' },
 ]
 
+function normCol(col: string): string {
+  return col.toLowerCase()
+    .replace(/ą/g,'a').replace(/ć/g,'c').replace(/ę/g,'e').replace(/ł/g,'l')
+    .replace(/ń/g,'n').replace(/ó/g,'o').replace(/ś/g,'s').replace(/ź/g,'z').replace(/ż/g,'z')
+    .replace(/[^a-z0-9]/g,'')
+}
+
 function autoMap(col: string): keyof Contact | '' {
-  const c = col.toLowerCase().replace(/[\s_\-]/g, '')
-  if (c.includes('firma') || c.includes('company') || c.includes('nazwa')) return 'company'
-  if (c.includes('imie') || c.includes('name') || c.includes('osoba') || c.includes('kontakt')) return 'name'
-  if (c.includes('stanowisko') || c.includes('position') || c.includes('rola')) return 'position'
+  const c = normCol(col)
+  // company
+  if (c === 'siec' || c.includes('firma') || c.includes('company') || c.includes('nazwa')) return 'company'
+  // name
+  if (c.includes('imie') || c.includes('imię') || c === 'name' || c.includes('osoba')) return 'name'
+  // position / format
+  if (c.includes('stanowisko') || c.includes('position') || c.includes('rola') || c.includes('format')) return 'position'
+  // phone / email
   if (c.includes('tel') || c.includes('phone') || c.includes('mob')) return 'phone'
-  if (c.includes('mail') || c.includes('email')) return 'email'
-  if (c.includes('siec') || c.includes('network') || c.includes('kanal')) return 'network'
-  if (c.includes('kategoria') || c.includes('category') || c.includes('typ')) return 'category'
-  if (c.includes('owner') || c.includes('opiekun') || c.includes('kto')) return 'owner'
+  if (c.includes('mail')) return 'email'
+  // category / segment
+  if (c.includes('segment') || c.includes('kategoria') || c.includes('category')) return 'category'
+  // network / channel
+  if (c.includes('network') || c.includes('kanal') || c.includes('zrodlo')) return 'network'
+  // owner
+  if (c.includes('przypisane') || c.includes('owner') || c.includes('opiekun')) return 'owner'
+  // stage
   if (c.includes('etap') || c.includes('stage') || c.includes('status')) return 'stage'
-  if (c.includes('priorytet') || c.includes('priority')) return 'priority'
-  if (c.includes('followup') || c.includes('follow') || c.includes('data')) return 'followup_date'
-  if (c.includes('oferta') || c.includes('offer') || c.includes('link') || c.includes('url')) return 'offer_url'
-  if (c.includes('notatk') || c.includes('note') || c.includes('uwag')) return 'notes'
+  // priority — wynik 0-100 and tier A/B/C both map here, converted in buildContact
+  if (c.includes('wynik') || c.includes('priorytet') || c.includes('priority') || c === 'tier') return 'priority'
+  // follow-up
+  if (c.includes('followup') || c.includes('follow') || c.includes('datakontaktu')) return 'followup_date'
+  // offer url
+  if (c.includes('url') || c.includes('link') || c.includes('oferta') || c.includes('offer')) return 'offer_url'
+  // notes — uzasadnienie, notatki, ryzyka
+  if (c.includes('notatk') || c.includes('note') || c.includes('uwag') ||
+      c.includes('uzasadnienie') || c.includes('ryzyko') || c.includes('ryzyka')) return 'notes'
   return ''
 }
 
@@ -1144,35 +1164,58 @@ function validateRow(row: Record<string, string>, mapping: Record<string, keyof 
     if (field && row[col] !== undefined) (mapped as any)[field] = row[col]
   }
   if (!mapped.company?.trim()) errors.push('Brak nazwy firmy')
-  if (mapped.priority !== undefined) {
-    const p = Number(mapped.priority)
-    if (isNaN(p) || p < 1 || p > 10) errors.push('Priorytet musi być 1-10')
-  }
   if (mapped.followup_date) {
     const d = new Date(mapped.followup_date as string)
     if (isNaN(d.getTime())) errors.push('Nieprawidłowy format daty follow-up')
   }
-  if (mapped.owner && !['MP','KK',''].includes(String(mapped.owner).trim())) {
-    errors.push(`Nieznany właściciel "${mapped.owner}" (dozwolone: MP, KK)`)
-  }
-  if (mapped.stage && !STAGES.find(s => s.id === String(mapped.stage).trim())) {
-    errors.push(`Nieznany etap "${mapped.stage}"`)
-  }
+  // priority: accept 1-10, 0-100 (auto-scaled), or A/B/C tier — all handled in buildContact
+  // owner: unmapped values silently become '' — no hard error
+  // stage: unknown values default to 'lead' — no hard error
   return errors
+}
+
+function parsePriority(val: string): number {
+  const t = val.trim().toUpperCase()
+  if (t === 'A') return 9
+  if (t === 'B') return 6
+  if (t === 'C') return 3
+  const n = parseFloat(t)
+  if (isNaN(n)) return 5
+  if (n > 10) return Math.round(Math.min(10, Math.max(1, (n / 100) * 9 + 1))) // 0-100 → 1-10
+  return Math.min(10, Math.max(1, Math.round(n)))
+}
+
+function parseOwner(val: string): string {
+  const v = val.trim().toUpperCase()
+  if (v === 'MP' || v.startsWith('M')) return 'MP'
+  if (v === 'KK' || v.startsWith('K')) return 'KK'
+  return ''
 }
 
 function buildContact(row: Record<string, string>, mapping: Record<string, keyof Contact | ''>): Partial<Contact> {
   const c: Partial<Contact> = { stage: 'lead', priority: 5, owner: '' }
+  const notesParts: string[] = []
   for (const [col, field] of Object.entries(mapping)) {
     if (!field || row[col] === undefined || row[col] === '') continue
     const val = row[col].trim()
-    if (field === 'priority') (c as any)[field] = Math.min(10, Math.max(1, parseInt(val) || 5))
-    else if (field === 'followup_date') {
+    if (field === 'priority') {
+      c.priority = parsePriority(val)
+    } else if (field === 'notes') {
+      // multiple columns mapped to notes get concatenated
+      notesParts.push(`${col}: ${val}`)
+    } else if (field === 'owner') {
+      c.owner = parseOwner(val)
+    } else if (field === 'stage') {
+      const matched = STAGES.find(s => s.id === val || normCol(s.label) === normCol(val))
+      c.stage = matched ? matched.id : 'lead'
+    } else if (field === 'followup_date') {
       const d = new Date(val)
-      ;(c as any)[field] = isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0]
+      c.followup_date = isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0]
+    } else {
+      (c as any)[field] = val
     }
-    else (c as any)[field] = val
   }
+  if (notesParts.length) c.notes = notesParts.join('\n')
   return c
 }
 
@@ -1196,7 +1239,16 @@ function ImportModal({ t, onClose, onImport }: {
   function handleFile(file: File) {
     const reader = new FileReader()
     reader.onload = e => {
-      const wb = XLSX.read(e.target!.result, { type: 'array', cellDates: true })
+      const buf = e.target!.result as ArrayBuffer
+      let wb: XLSX.WorkBook
+      if (file.name.toLowerCase().endsWith('.csv')) {
+        // Try UTF-8; if replacement chars appear, fall back to Windows-1250 (Excel default for Polish)
+        let text = new TextDecoder('utf-8').decode(buf)
+        if (text.includes('\uFFFD')) text = new TextDecoder('windows-1250').decode(buf)
+        wb = XLSX.read(text, { type: 'string' })
+      } else {
+        wb = XLSX.read(buf, { type: 'array', cellDates: true })
+      }
       const ws = wb.Sheets[wb.SheetNames[0]]
       const data: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
       if (data.length < 2) return
