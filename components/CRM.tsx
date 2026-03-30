@@ -110,8 +110,9 @@ export default function CRM() {
   const moveToStage = async (id: string, stageId: string) => {
     setSaving(true)
     try {
-      await upsertContact({ id, stage: stageId })
-      setContacts(cs => cs.map(c => c.id === id ? { ...c, stage: stageId } : c))
+      const now = new Date().toISOString()
+      await upsertContact({ id, stage: stageId, updated_at: now })
+      setContacts(cs => cs.map(c => c.id === id ? { ...c, stage: stageId, updated_at: now } : c))
     } catch { showToast('Błąd zapisu','err') }
     setSaving(false)
   }
@@ -146,8 +147,9 @@ export default function CRM() {
   const handleOwnerChange = async (id: string, owner: string) => {
     setSaving(true)
     try {
-      await upsertContact({ id, owner })
-      setContacts(cs => cs.map(c => c.id === id ? { ...c, owner } : c))
+      const now = new Date().toISOString()
+      await upsertContact({ id, owner, updated_at: now })
+      setContacts(cs => cs.map(c => c.id === id ? { ...c, owner, updated_at: now } : c))
     } catch { showToast('Błąd zapisu','err') }
     setSaving(false)
   }
@@ -196,14 +198,16 @@ export default function CRM() {
     isOverdue(c.followup_date) && c.stage !== 'won' && c.stage !== 'lost'
   ).length
 
+  const REMINDER_DAYS = 7
   const now = Date.now()
   const reminderContacts = contacts.filter(c => {
     if (c.stage === 'won' || c.stage === 'lost') return false
+    if (!c.activities?.length) return false          // tylko gdy był realny kontakt
     if (dismissedReminders.has(c.id)) return false
-    const lastDate = c.activities?.length
-      ? new Date(c.activities[0].created_at).getTime()
-      : new Date(c.created_at).getTime()
-    return (now - lastDate) >= 7 * 24 * 60 * 60 * 1000
+    const lastActivity = new Date(c.activities[0].created_at).getTime()
+    const lastUpdated  = new Date(c.updated_at).getTime()
+    const lastInteraction = Math.max(lastActivity, lastUpdated)
+    return (now - lastInteraction) >= REMINDER_DAYS * 24 * 60 * 60 * 1000
   })
 
   // Stats
@@ -350,20 +354,26 @@ export default function CRM() {
               letterSpacing:'.06em', display:'block', marginBottom:4 }}>Czas na kontakt</span>
             <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
               {reminderContacts.map(c => {
-                const days = Math.floor((now - (c.activities?.length
-                  ? new Date(c.activities[0].created_at).getTime()
-                  : new Date(c.created_at).getTime())) / (1000 * 60 * 60 * 24))
+                const lastActivity = new Date(c.activities![0].created_at).getTime()
+                const lastUpdated  = new Date(c.updated_at).getTime()
+                const days = Math.floor((now - Math.max(lastActivity, lastUpdated)) / (1000 * 60 * 60 * 24))
+                const owner = OWNERS.find(o => o.id === c.owner)
                 return (
                   <div key={c.id} style={{ display:'flex', alignItems:'center', gap:5,
                     background: dark ? '#2a1f00' : '#fef3c7',
-                    border:'1px solid #f59e0b44', borderRadius:6, padding:'3px 8px 3px 8px' }}>
+                    border:'1px solid #f59e0b44', borderRadius:6, padding:'3px 8px' }}>
                     <button onClick={() => { setSelected(c.id); if (view !== 'pipeline') setView('pipeline') }}
                       style={{ background:'none', border:'none', cursor:'pointer', padding:0,
                         fontSize:12, color: dark ? '#fbbf24' : '#92400e', fontWeight:600 }}>
                       {c.company}
                     </button>
+                    {owner && (
+                      <span style={{ fontSize:9, fontWeight:700, background:owner.color+'22',
+                        color:owner.color, border:`1px solid ${owner.color}44`,
+                        borderRadius:3, padding:'1px 4px' }}>{owner.label}</span>
+                    )}
                     <span style={{ fontSize:10, color: dark ? '#d97706' : '#b45309' }}>
-                      — {days} {days === 1 ? 'dzień' : 'dni'} temu
+                      {days} {days === 1 ? 'dzień' : 'dni'} temu
                     </span>
                     <button onClick={() => setDismissedReminders(s => new Set([...s, c.id]))}
                       title="Odrzuć"
